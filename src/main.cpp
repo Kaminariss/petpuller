@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <LiquidCrystal.h>
 #include <AccelStepper.h>
+#include "MedianFilterLib2.h"
 
 // LCD Pins
 #define pin_RS 8
@@ -20,9 +21,6 @@
 
 // Heater Pin
 #define heaterPin 11
-
-long thermistorTimestamp;
-long periodI = 1000;
 
 // buttons
 unsigned long lastReadButtons = 0;
@@ -44,7 +42,6 @@ float RT, VR, ln, VRT;
 float T0 = 25 + 273.15;
 
 // PID Variables
-
 float pidError = 0;
 float previousError = 0;
 float elapsedTime;
@@ -121,18 +118,6 @@ void clearLCDLine(int line) {
 	}
 }
 
-void readThermistor() {
-	VRT = analogRead(A4); // Acquisition analog value of VRT
-	VRT = (5.00 / 1023.00) * VRT; // Conversion to voltage
-	VR = VCC - VRT;
-	RT = VRT / (VR / R); // Resistance of RT
-
-	ln = log(RT / RT0);
-	thermistorTemp = (1 / ((ln / B) + (1 / T0))); // Temperature from thermistor
-
-	thermistorTemp -= 273.15; // Conversion to Celsius
-}
-
 void refreshDisplay() {
 	clearLCDLine(0);
 	lcd.setCursor(0, 0);
@@ -155,13 +140,44 @@ void refreshDisplay() {
 	lcd.print(tsBuff);
 }
 
+unsigned long lastReadThermistor = 0;
+unsigned long lastRefreshThermistor = 0;
+MedianFilter2<float> thermistorReadings(30);
+
+void readThermistor(unsigned long now) {
+	// read thermistor once per 50ms
+	if (now - lastReadThermistor < 50) {
+		return;
+	}
+
+	VRT = analogRead(A4); // Acquisition analog value of VRT
+	VRT = (5.00 / 1023.00) * VRT; // Conversion to voltage
+	VR = VCC - VRT;
+	RT = VRT / (VR / R); // Resistance of RT
+
+	ln = log(RT / RT0);
+	float temp = (1 / ((ln / B) + (1 / T0))); // Temperature from thermistor
+
+	temp -= 273.15; // Conversion to Celsius
+	thermistorTemp = thermistorReadings.AddValue(temp);
+
+	// refresh display once per 500 ms
+	if (now - lastRefreshThermistor > 500) {
+		//Serial.println(thermistorTemp);
+		refreshDisplay();
+		lastRefreshThermistor = now;
+	}
+
+	lastReadThermistor = now;
+}
+
 void readButtons(unsigned long now) {
 	if (now - lastReadButtons < 150) {
 		return;
 	}
 
 	int x;
-	x = analogRead(0);
+	x = analogRead(A0);
 
 	if (x < 60) {
 		// Right button
@@ -244,17 +260,10 @@ void loop() {
 	unsigned long now = millis();
 
 	// Reading temperature
-	readThermistor();
+	readThermistor(now);
 
 	// Pid controller
 	heaterControl(now);
-
-	// Print temperature to serial port
-	if (now - thermistorTimestamp > periodI) {
-		thermistorTimestamp = now;
-		Serial.println(thermistorTemp);
-		refreshDisplay();
-	}
 
 	readButtons(now);
 
