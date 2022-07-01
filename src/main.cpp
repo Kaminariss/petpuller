@@ -19,6 +19,7 @@
 #define motorEnablePin 12
 #define dirPin 2
 #define stepPin 3
+#define dividerRef 182
 
 // Define motor interface type
 #define motorInterfaceType 1
@@ -59,11 +60,11 @@ float pidD = 0;
 unsigned long timePrev = 0;
 
 // PID settings
-float setTemp = 175;
+float setTemp = 165;
 
-float kp = 3.0f;
-float ki = 0.0f;
-float kd = 1.0f;
+float kp = 35.0f;
+float ki = 2.0f;
+float kd = 5.0f;
 
 bool heaterEnabled = false;
 
@@ -98,6 +99,28 @@ AccelStepper myStepper(motorInterfaceType, stepPin, dirPin);
 thermistor therm1(A4, 0);
 PID pidController = PID(kp, ki, kd, 0, 255);
 
+int analogX;
+unsigned long lastReadThermistor = 0;
+unsigned long lastRefreshThermistor = 0;
+// MedianFilter2<float> thermistorReadings(30);
+MovingAveragePlus<float> thermistorReadings(30);
+
+float readThermistorRaw() {
+	analogX = analogRead(A5);
+	analogX -= dividerRef;
+	VRT = analogRead(A4); // Acquisition analog value of VRT
+	VRT -= analogX;
+
+	VRT = (5.00 / 1023.00) * VRT; // Conversion to voltage
+	VR = VCC - VRT;
+	RT = VRT / (VR / R); // Resistance of RT
+
+	ln = log(RT / RT0);
+	float temp = (1 / ((ln / B) + (1 / T0))); // Temperature from thermistor
+	// float temp = therm1.analog2temp();
+
+	return temp - 273.15; // Conversion to Celsius
+}
 
 void autotunePID() {
 	PIDAutotuner tuner = PIDAutotuner();
@@ -123,22 +146,11 @@ void autotunePID() {
 		microseconds = micros();
 
 		// Get input value here (temperature, encoder position, velocity, etc)
-		// VRT = analogRead(A4); // Acquisition analog value of VRT
-		// VRT = (5.00 / 1023.00) * VRT; // Conversion to voltage
-		// VR = VCC - VRT;
-		// RT = VRT / (VR / R); // Resistance of RT
-		//
-		// ln = log(RT / RT0);
-		// float temp = (1 / ((ln / B) + (1 / T0))); // Temperature from thermistor
-		//
-		// temp -= 273.15; // Conversion to Celsius
 
-		double input = therm1.analog2temp();
+		double input = readThermistorRaw();
 
 		// Call tunePID() with the input value
 		double output = tuner.tunePID(input);
-
-
 
 		// Set the output - tunePid() will return values within the range configured
 		// by setOutputRange(). Don't change the value or the tuning results will be
@@ -193,11 +205,11 @@ void setup() {
 	myStepper.setAcceleration(800);
 	myStepper.setSpeed(motorSpeed);
 
-	TCCR2B = 0b00000111; // x1024
-	TCCR2A = 0b00000011; // fast pwm
+	//TCCR2B = 0b00000111; // x1024
+	//TCCR2A = 0b00000011; // fast pwm
 
 	pidController.setSetpoint(setTemp);
-	autotunePID();
+	//autotunePID();
 }
 
 void clearLCDLine(int line) {
@@ -229,10 +241,6 @@ void refreshDisplay() {
 	lcd.print(tsBuff);
 }
 
-unsigned long lastReadThermistor = 0;
-unsigned long lastRefreshThermistor = 0;
-// MedianFilter2<float> thermistorReadings(30);
-MovingAveragePlus<float> thermistorReadings(30);
 
 void readThermistor(unsigned long now) {
 	// read thermistor once per 50ms
@@ -240,16 +248,8 @@ void readThermistor(unsigned long now) {
 		return;
 	}
 
-	VRT = analogRead(A4); // Acquisition analog value of VRT
-	VRT = (5.00 / 1023.00) * VRT; // Conversion to voltage
-	VR = VCC - VRT;
-	RT = VRT / (VR / R); // Resistance of RT
+	float temp = readThermistorRaw();
 
-	ln = log(RT / RT0);
-	float temp = (1 / ((ln / B) + (1 / T0))); // Temperature from thermistor
-
-	temp -= 273.15; // Conversion to Celsius
-	// float temp = therm1.analog2temp();
 	thermistorReadings.push(temp);
 	thermistorTemp = thermistorReadings.get();
 
@@ -259,7 +259,9 @@ void readThermistor(unsigned long now) {
 		Serial.print(',');
 		Serial.print(pidValue);
 		Serial.print(',');
-		Serial.println(thermistorTemp);
+		Serial.print(thermistorTemp);
+		Serial.print(',');
+		Serial.println(analogX);
 		refreshDisplay();
 		lastRefreshThermistor = now;
 	}
