@@ -1,0 +1,3 @@
+(sym_lib_table
+  (lib (name A4988_STEPPER_MOTOR_DRIVER_CARRIER)(type Legacy)(uri ${KIPRJMOD}/A4988_STEPPER_MOTOR_DRIVER_CARRIER/A4988_STEPPER_MOTOR_DRIVER_CARRIER.lib)(options "")(descr ""))
+)

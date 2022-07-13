@@ -4,8 +4,8 @@
 #include <pidcontroller.h>
 #include <PIDAutotuner.h>
 #include <MovingAveragePlus.h>
-#define TEMP_SENSOR_0 51
 #include <thermistor.h>
+#define TEMP_SENSOR_0 51
 
 // LCD Pins
 #define pin_RS 8
@@ -319,40 +319,10 @@ void heaterControl(unsigned long now) {
 		return;
 	}
 
-	// // For derivative, we need real time to calculate speed change rate
-	// // elapsedTime = (now - timePrev) / 1000.0f;
-	// elapsedTime = 500.0f / 1000.0f;
-	// timePrev = now; // the previous time is stored before the actual time read
-	//
-	// pidError = setTemp - thermistorTemp;
-	//
-	// // Calculate the P value
-	// pidP = kp * pidError;
-	//
-	// // Calculate the I value in a range on +-3
-	// if (pidError > -1 && pidError < 1) {
-	// 	pidI += (ki * pidError);
-	// }
-	//
-	// // Now we can calculate the D value
-	// pidD = kd * ((pidError - previousError) / elapsedTime);
-	// // Final total PID value is the sum of P + I + D
-	// pidValue = pidP + pidI + pidD;
-	//
-	// // We define PWM range between 0 and 255
-	// if (pidValue < 0) {
-	// 	pidValue = 0;
-	// }
-	//
-	// if (pidValue > 255) {
-	// 	pidValue = 255;
-	// }
 	pidValue = pidController.calculate(thermistorTemp);
 
 	// Now we can write the PWM signal to the mosfet on digital pin D3
-	analogWrite(heaterPin, 255-(int)pidValue);
-
-	// previousError = pidError;     // Remember to store the previous error for next loop.
+	analogWrite(heaterPin, 255 - (int)pidValue);
 }
 
 void loop() {
