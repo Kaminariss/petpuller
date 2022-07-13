@@ -1,7 +1,11 @@
 #include <Arduino.h>
 #include <LiquidCrystal.h>
 #include <AccelStepper.h>
-#include "MedianFilterLib2.h"
+#include <pidcontroller.h>
+#include <PIDAutotuner.h>
+#include <MovingAveragePlus.h>
+#include <thermistor.h>
+#define TEMP_SENSOR_0 51
 
 // LCD Pins
 #define pin_RS 8
@@ -15,12 +19,14 @@
 #define motorEnablePin 12
 #define dirPin 2
 #define stepPin 3
+#define dividerRef 182
 
 // Define motor interface type
 #define motorInterfaceType 1
 
 // Heater Pin
 #define heaterPin 11
+#define heaterInterval 500
 
 // buttons
 unsigned long lastReadButtons = 0;
@@ -54,11 +60,11 @@ float pidD = 0;
 unsigned long timePrev = 0;
 
 // PID settings
-float setTemp = 145;
+float setTemp = 165;
 
-float kp = 9.1f;
-float ki = 0.6;
-float kd = 1.8;
+float kp = 35.0f;
+float ki = 2.0f;
+float kd = 5.0f;
 
 bool heaterEnabled = false;
 
@@ -90,6 +96,95 @@ byte charDown[] = {
 
 LiquidCrystal lcd(pin_RS, pin_EN, pin_d4, pin_d5, pin_d6, pin_d7);
 AccelStepper myStepper(motorInterfaceType, stepPin, dirPin);
+thermistor therm1(A4, 0);
+PID pidController = PID(kp, ki, kd, 0, 255);
+
+int analogX;
+unsigned long lastReadThermistor = 0;
+unsigned long lastRefreshThermistor = 0;
+// MedianFilter2<float> thermistorReadings(30);
+MovingAveragePlus<float> thermistorReadings(30);
+
+float readThermistorRaw() {
+	analogX = analogRead(A5);
+	analogX -= dividerRef;
+	VRT = analogRead(A4); // Acquisition analog value of VRT
+	VRT -= analogX;
+
+	VRT = (5.00 / 1023.00) * VRT; // Conversion to voltage
+	VR = VCC - VRT;
+	RT = VRT / (VR / R); // Resistance of RT
+
+	ln = log(RT / RT0);
+	float temp = (1 / ((ln / B) + (1 / T0))); // Temperature from thermistor
+	// float temp = therm1.analog2temp();
+
+	return temp - 273.15; // Conversion to Celsius
+}
+
+void autotunePID() {
+	PIDAutotuner tuner = PIDAutotuner();
+
+	tuner.setTargetInputValue(setTemp);
+	tuner.setLoopInterval(heaterInterval);
+	tuner.setOutputRange(0, 255);
+
+	// Set the Ziegler-Nichols tuning mode
+	// Set it to either PIDAutotuner::znModeBasicPID, PIDAutotuner::znModeLessOvershoot,
+	// or PIDAutotuner::znModeNoOvershoot. Test with znModeBasicPID first, but if there
+	// is too much overshoot you can try the others.
+	tuner.setZNMode(PIDAutotuner::znModeBasicPID);
+
+	// This must be called immediately before the tuning loop
+	tuner.startTuningLoop();
+
+	// Run a loop until tuner.isFinished() returns true
+	unsigned long microseconds;
+	while (!tuner.isFinished()) {
+		// This loop must run at the same speed as the PID control loop being tuned
+		unsigned long prevMicroseconds = microseconds;
+		microseconds = micros();
+
+		// Get input value here (temperature, encoder position, velocity, etc)
+
+		double input = readThermistorRaw();
+
+		// Call tunePID() with the input value
+		double output = tuner.tunePID(input);
+
+		// Set the output - tunePid() will return values within the range configured
+		// by setOutputRange(). Don't change the value or the tuning results will be
+		// incorrect.
+		// doSomethingToSetOutput(output);
+		analogWrite(heaterPin, 255-output);
+
+		Serial.print(millis()/1000.0f);
+		Serial.print(',');
+		Serial.print(output);
+		Serial.print(',');
+		Serial.println(input);
+		// refreshDisplay();
+
+		// This loop must run at the same speed as the PID control loop being tuned
+		//while (micros() - microseconds < heaterInterval)
+		delay(heaterInterval);
+	}
+
+	// Turn the output off here.
+	// doSomethingToSetOutput(0);
+
+	// Get PID gains - set your PID controller's gains to these
+	kp = tuner.getKp();
+	ki = tuner.getKi();
+	kd = tuner.getKd();
+
+	Serial.print("Kp: ");
+	Serial.print(kp);
+	Serial.print(" ki: ");
+	Serial.print(ki);
+	Serial.print(" Kp: ");
+	Serial.print(kd);
+}
 
 void setup() {
 	Serial.begin(250000);
@@ -109,6 +204,12 @@ void setup() {
 	myStepper.setMaxSpeed(6000);
 	myStepper.setAcceleration(800);
 	myStepper.setSpeed(motorSpeed);
+
+	//TCCR2B = 0b00000111; // x1024
+	//TCCR2A = 0b00000011; // fast pwm
+
+	pidController.setSetpoint(setTemp);
+	//autotunePID();
 }
 
 void clearLCDLine(int line) {
@@ -140,9 +241,6 @@ void refreshDisplay() {
 	lcd.print(tsBuff);
 }
 
-unsigned long lastReadThermistor = 0;
-unsigned long lastRefreshThermistor = 0;
-MedianFilter2<float> thermistorReadings(30);
 
 void readThermistor(unsigned long now) {
 	// read thermistor once per 50ms
@@ -150,20 +248,20 @@ void readThermistor(unsigned long now) {
 		return;
 	}
 
-	VRT = analogRead(A4); // Acquisition analog value of VRT
-	VRT = (5.00 / 1023.00) * VRT; // Conversion to voltage
-	VR = VCC - VRT;
-	RT = VRT / (VR / R); // Resistance of RT
+	float temp = readThermistorRaw();
 
-	ln = log(RT / RT0);
-	float temp = (1 / ((ln / B) + (1 / T0))); // Temperature from thermistor
-
-	temp -= 273.15; // Conversion to Celsius
-	thermistorTemp = thermistorReadings.AddValue(temp);
+	thermistorReadings.push(temp);
+	thermistorTemp = thermistorReadings.get();
 
 	// refresh display once per 500 ms
 	if (now - lastRefreshThermistor > 500) {
-		//Serial.println(thermistorTemp);
+		Serial.print(now/1000.0f);
+		Serial.print(',');
+		Serial.print(pidValue);
+		Serial.print(',');
+		Serial.print(thermistorTemp);
+		Serial.print(',');
+		Serial.println(analogX);
 		refreshDisplay();
 		lastRefreshThermistor = now;
 	}
@@ -188,11 +286,13 @@ void readButtons(unsigned long now) {
 	else if (x < 200) {
 		// Up button
 		setTemp += 5;
+		pidController.setSetpoint(setTemp);
 		refreshDisplay();
 	}
 	else if (x < 400) {
 		// Down button
 		setTemp -= 5;
+		pidController.setSetpoint(setTemp);
 		refreshDisplay();
 	}
 	else if (x < 600) {
@@ -215,45 +315,14 @@ void readButtons(unsigned long now) {
 }
 
 void heaterControl(unsigned long now) {
-	if (now - timePrev < 300) {
+	if (now - timePrev < heaterInterval) {
 		return;
 	}
 
-	// For derivative, we need real time to calculate speed change rate
-	elapsedTime = (now - timePrev) / 1000.0f;
-	timePrev = now; // the previous time is stored before the actual time read
-
-	Serial.println("tock");
-	Serial.println(pidValue);
-
-	pidError = setTemp - thermistorTemp;
-
-	// Calculate the P value
-	pidP = kp * pidError;
-
-	// Calculate the I value in a range on +-3
-	if (pidError > -3 && pidError < 3) {
-		pidI += (ki * pidError);
-	}
-
-	// Now we can calculate the D value
-	pidD = kd * ((pidError - previousError) / elapsedTime);
-	// Final total PID value is the sum of P + I + D
-	pidValue = pidP + pidI + pidD;
-
-	// We define PWM range between 0 and 255
-	if (pidValue < 0) {
-		pidValue = 0;
-	}
-
-	if (pidValue > 255) {
-		pidValue = 255;
-	}
+	pidValue = pidController.calculate(thermistorTemp);
 
 	// Now we can write the PWM signal to the mosfet on digital pin D3
-	analogWrite(heaterPin, (int)pidValue);
-
-	previousError = pidError;     // Remember to store the previous error for next loop.
+	analogWrite(heaterPin, 255 - (int)pidValue);
 }
 
 void loop() {
