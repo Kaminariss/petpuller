@@ -8,8 +8,8 @@
 #define TEMP_SENSOR_0 51
 
 // LCD Pins
-#define pin_RS 8
-#define pin_EN 9
+#define pin_RS 2
+#define pin_EN 3
 #define pin_d4 4
 #define pin_d5 5
 #define pin_d6 6
@@ -17,18 +17,19 @@
 
 // Motor Pins
 #define motorEnablePin 12
-#define dirPin 2
-#define stepPin 3
-#define dividerRef 182
+#define dirPin 13
+#define stepPin 8
+#define dividerRef 329
 
 // Define motor interface type
 #define motorInterfaceType 1
 
 // Heater Pin
-#define heaterPin 11
+#define heaterPin 9
 #define heaterInterval 500
 
 // buttons
+#define buttonPin A7
 unsigned long lastReadButtons = 0;
 
 // Stepper motor variables
@@ -36,9 +37,11 @@ bool motorEnabled = false;
 int motorSpeed = 2300;
 
 // Temperature variables
+#define thermistorPin A6
+#define staticDividerPin A5
 float thermistorTemp;
 
-#define RT0 100000 // Ω
+#define RT0 47000 // Ω
 #define B 4036 // K
 #define VCC 5    // Supply voltage
 #define R 10000  // R = 10KΩ
@@ -60,7 +63,7 @@ float pidD = 0;
 unsigned long timePrev = 0;
 
 // PID settings
-float setTemp = 165;
+float setTemp = 10;
 
 float kp = 35.0f;
 float ki = 2.0f;
@@ -106,9 +109,9 @@ unsigned long lastRefreshThermistor = 0;
 MovingAveragePlus<float> thermistorReadings(30);
 
 float readThermistorRaw() {
-	analogX = analogRead(A5);
+	analogX = analogRead(staticDividerPin);
 	analogX -= dividerRef;
-	VRT = analogRead(A4); // Acquisition analog value of VRT
+	VRT = analogRead(thermistorPin); // Acquisition analog value of VRT
 	VRT -= analogX;
 
 	VRT = (5.00 / 1023.00) * VRT; // Conversion to voltage
@@ -275,7 +278,7 @@ void readButtons(unsigned long now) {
 	}
 
 	int x;
-	x = analogRead(A0);
+	x = analogRead(buttonPin);
 
 	if (x < 60) {
 		// Right button
